@@ -1,0 +1,38 @@
+# version: "3.9"
+
+# services:
+#   app:
+#     build: 
+#       context: .
+#       dockerfile: Dockerfile
+#     container_name: sultan_1
+#     ports:
+#       - "8001:8001"
+#     env_file:
+#       - .env
+#     volumes:
+#       - ./app:/app # adding volume for local developement. it's a bad idea in production
+#     command: uvicorn main:app --host 0.0.0.0 --port 8001
+#     restart: always
+
+
+
+
+version: "3.9"
+
+services:
+  scam-detector:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: sultan_1
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    # No volumes in production - code is baked into the image
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --workers 4
+    restart: always

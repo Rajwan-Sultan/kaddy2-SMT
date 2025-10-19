@@ -2,6 +2,8 @@ from google import genai
 from google.genai import types
 from app.config import settings
 from app.schemas import OutputSchema
+import re
+
 
 class LLMService:
     """Service for LLM-based scam detection"""
@@ -24,18 +26,18 @@ class LLMService:
         if not self.client:
             raise Exception("Gemini client not available")
         
-        format_instructions = (
-            "Return valid JSON with these exact fields:\n"
-            "Strictly use this format:\n"
-            "{\n"
-            '  "scam_detected": bool,\n'
-            '  "summary_of_the_call": string,\n'
-            '  "scam_tags": [string]\n'
-            "}"
-        )
+        # format_instructions = (
+        #     "Return valid JSON with these exact fields:\n"
+        #     "Strictly use this format:\n"
+        #     "{\n"
+        #     '  "scam_detected": bool,\n'
+        #     '  "summary_of_the_call": string,\n'
+        #     '  "scam_tags": [string]\n'
+        #     "}"
+        # )
         
         prompt = (
-"""You are an expert fraud detection analyst specializing in telecommunications scams.
+"""You are an expert fraud detection analyst specializing in telecommunications scams.Strictly remove any markdown formatting from your response.
 # CLASSIFICATION CRITERIA
 ## CLASSIFY AS "SCAM" IF ANY OF THESE RED FLAGS ARE PRESENT:
 - **Urgency & Pressure**: Immediate threats, limited-time offers, demands for quick action
@@ -64,10 +66,11 @@ class LLMService:
 4. Weight multiple weak indicators higher than single strong ones
 5. Consider cultural and regional communication norms\n\n
 Extract the call data and return ONLY valid JSON. No explanations or formatting.\nFocus on relevant sections like if call is a possible scam, reason for contacting the person and the tags for possible scam\n
-If any information is missing, then just leave it empty or use empty arrays.\nIgnore irrelevant sections like references, hobbies, or template artifacts.\n\n""")
+If any information is missing, then just leave it empty or use empty arrays.\nIgnore irrelevant sections like references, hobbies, or template artifacts.\n\n
+""")
         parts = [
-            types.Part.from_text(text=transcript),
-            types.Part.from_text(text=prompt)
+            types.Part.from_text(text=prompt),
+            types.Part.from_text(text=transcript)
         ]
 
         generation_config = types.GenerateContentConfig(
@@ -77,13 +80,48 @@ If any information is missing, then just leave it empty or use empty arrays.\nIg
             response_schema=OutputSchema.model_json_schema()
         )
 
-        response = await self.client.aio.models.generate_content(
-            model=settings.MODEL_NAME,
-            contents=parts,
-            config=generation_config
-        )
+        # response = await self.client.aio.models.generate_content(
+        #     model=settings.MODEL_NAME,
+        #     contents=parts,
+        #     config=generation_config
+        # )
         
-        if not getattr(response, "text", None):
-            raise Exception("Empty LLM response")
-        
-        return OutputSchema.model_validate_json(response.text)
+        # if not getattr(response, "text", None):
+        #     raise Exception("Empty LLM response")
+
+        # # After getting response.text
+        # response_text = response.text.strip()
+        # # Remove markdown code blocks using regex
+        # response_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', response_text, flags=re.MULTILINE).strip()
+
+        # return OutputSchema.model_validate_json(response_text)
+      
+
+
+    
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=settings.MODEL_NAME,
+                contents=parts,
+                config=generation_config
+            )
+            
+            if not response or not getattr(response, "text", None):
+                raise ValueError("Empty LLM response")
+            
+            # Clean response
+            response_text = response.text.strip()
+            # response_text = re.sub(r'^``````$', '', response_text, flags=re.MULTILINE).strip()
+            response_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', response_text, flags=re.MULTILINE).strip()
+
+            
+            # Validate against schema
+            return OutputSchema.model_validate_json(response_text)
+            
+        except Exception as e:
+            # Log the error with context
+            print(f"LLM parsing failed: {e}")
+            print(f"Raw response: {getattr(response, 'text', 'No response')}")
+            
+            # Return safe default or re-raise
+            raise Exception(f"Failed to parse LLM output: {e}")
