@@ -15,6 +15,9 @@ class ScamTag(BaseModel):
         "Other"
     ] = Field(..., description="Type of scam detected")
 
+    # class Config:
+    #     extra = "ignore"  # Reject any extra fields from LLM
+
 class RiskFactors(BaseModel):
     urgency_pressure: Annotated[Optional[int], Field(ge=0, le=10, description="Risk factor score for urgency and pressure tactics")] = None
     suspicious_payment: Annotated[Optional[int], Field(ge=0, le=10, description="Risk factor score for suspicious payment requests")] = None
@@ -22,12 +25,39 @@ class RiskFactors(BaseModel):
     information_request: Annotated[Optional[int], Field(ge=0, le=10, description="Risk factor score for personal information requests")] = None
     emotional_manipulation: Annotated[Optional[int], Field(ge=0, le=10, description="Risk factor score for emotional manipulation tactics")] = None
 
+    # class Config:
+    #     extra = "ignore"  # Reject any extra fields from LLM
+
 class OutputSchema(BaseModel):
-    scam_detected: Annotated[Literal['scam','ambiguous','legitimate'], Field(description="Indicates if the call is a scam or not")] = []
+    scam_detected: Annotated[Literal['scam','ambiguous','legitimate'], Field(description="Indicates if the call is a scam or not")] = None
     confidence_score: Annotated[Optional[int], Field(ge=0, le=100, description="Confidence score in percentage from 0 to 100")] = None
     risk_factors: Annotated[Optional[RiskFactors], Field(description="Detailed risk factor scores")] = None
     explanation: Annotated[Optional[str], Field(description="Summary of the call in two lines")] = None
-    scam_tags: Annotated[Optional[List[ScamTag]], Field(description="List of scam tags detected in the call")] = []
+    scam_tags: Annotated[Optional[List[ScamTag]], Field(description="List of scam tags detected in the call")] = None
+    # class Config:
+    #     extra = "ignore"  # Reject any extra fields from LLM
+        
+    #     # Example output for LLM reference
+    #     schema_extra = {
+    #         "example": {
+    #             "scam_detected": "scam",
+    #             "confidence_score": 85,
+    #             "risk_factors": {
+    #                 "urgency_pressure": 9,
+    #                 "suspicious_payment": 7,
+    #                 "impersonation": 6,
+    #                 "information_request": 8,
+    #                 "emotional_manipulation": 7
+    #             },
+    #             "explanation": "Caller impersonated IRS agent demanding immediate payment via gift cards. Multiple high-pressure tactics used.",
+    #             "scam_tags": [
+    #                 {"tag": "Phishing"},
+    #                 {"tag": "Tech Support Scam"}
+    #             ]
+    #         }
+    #     }
+
+
 
 
 
