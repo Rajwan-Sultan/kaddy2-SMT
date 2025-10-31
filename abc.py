@@ -12,9 +12,6 @@ load_dotenv()
 app = FastAPI()
 
 
-
-
-
 # --- LLM SDK Imports ---
 from google import genai
 from google.genai import types
@@ -27,12 +24,6 @@ try:
     gemini_client = genai.Client(api_key=API_KEY)
 except Exception as e:
     print(f"Warning: Gemini client initialization failed: {e}")
-
-
-
-
-
-
 
 
 # --- Schema Of the Output ---
@@ -65,17 +56,6 @@ class OutputSchema(BaseModel):
     explanation: Annotated[Optional[str], Field(description="Summary of the call in two lines")] = None
     scam_tags: Annotated[Optional[List[ScamTag]], Field(description="List of scam tags detected in the call")] = None
 
-
-
-
-
-
-
-
-
-
-
-
 def check_mime_type(file: UploadFile):
     ext = file.filename.split('.')[-1].lower()
     allowed_extensions = {
@@ -93,8 +73,6 @@ def check_mime_type(file: UploadFile):
     if ext not in allowed_extensions:
         raise Exception(f"Unsupported file extension: {ext}")
     return allowed_extensions[ext]
-
-
 
 def prompt_text():
     prompt = (
@@ -129,10 +107,6 @@ def prompt_text():
     Extract the call data and return ONLY valid JSON. No explanations or formatting.\nFocus on relevant sections like if call is a possible scam, reason for contacting the person and the tags for possible scam\n
     If any information is missing, then just leave it empty or use empty arrays.\nIgnore irrelevant sections like references, hobbies, or template artifacts.\n\n""")
     return prompt
-
-
-
-
 
 # --- LLM Parsing Function ---
 async def parse_with_llm_audio(file_path: str, mime_type: str) -> OutputSchema:
@@ -170,11 +144,6 @@ async def parse_with_llm_audio(file_path: str, mime_type: str) -> OutputSchema:
         raise Exception("Empty LLM response")
     return OutputSchema.model_validate_json(response.text)
 
-
-
-
-
-
 async def parse_with_llm_text(file_content) -> OutputSchema:
     """Parse file directly with LLM using native file processing capabilities (synchronous wrapper)."""
     if not gemini_client:
@@ -206,21 +175,6 @@ async def parse_with_llm_text(file_content) -> OutputSchema:
         raise Exception("Empty LLM response")
     return OutputSchema.model_validate_json(response.text)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @app.post("/analyzer_audio", response_model=OutputSchema)
 async def analyze_audio(file: UploadFile = File(...)):
     """Analyze uploaded audio file for scam detection."""
@@ -248,8 +202,6 @@ async def analyze_audio(file: UploadFile = File(...)):
             detail=f"Error processing audio file: {str(e)}"
         )
 
-
-
 @app.post("/analyzer_text", response_model=OutputSchema)
 async def analyze_text(file: str):
     """Analyze uploaded text file for scam detection."""
@@ -265,9 +217,6 @@ async def analyze_text(file: str):
             detail=f"Error processing text file: {str(e)}"
         )
 
-
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="127.0.0.1", port=8000)
