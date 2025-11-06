@@ -1,11 +1,12 @@
 import asyncio
 import json
 import re
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Annotated,Literal
 import os
 from dotenv import load_dotenv
+import uuid
 load_dotenv()
 
 
@@ -217,6 +218,218 @@ async def analyze_text(file: str):
             detail=f"Error processing text file: {str(e)}"
         )
 
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="127.0.0.1", port=8000)
+@app.websocket("/analyzer_audio_stream")
+async def analyze_audio_stream(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time audio chunk analysis.
+    
+    Connection Flow:
+    1. Connect to ws://host:port/analyzer_audio_stream
+    2. Receive connection confirmation (JSON)
+    3. Send audio format as text (e.g., "mp3", "wav", "webm")
+    4. Receive format confirmation (JSON)
+    5. Send audio data continuously as binary
+    6. Send "ANALYZE" as text to trigger analysis of accumulated audio
+    7. Receive analysis results (JSON) - instantly after ANALYZE
+    8. Repeat steps 5-7 for multiple files
+    9. Send "CLOSE" to close connection or just disconnect
+    
+    Supported formats: flac, mp3, m4a, mpeg, mpga, mp4, ogg, pcm, wav, webm
+    """
+    await websocket.accept()
+    audio_format = None
+    audio_buffer = bytearray()
+    analysis_count = 0
+    
+    try:
+        await websocket.send_json({
+            "status": "connected",
+            "message": "Send audio format first (e.g., 'mp3', 'wav', 'webm'), then send audio data as binary. Send 'ANALYZE' to analyze, 'CLOSE' to disconnect."
+        })
+        
+        # First message should be the audio format
+        format_message = await websocket.receive_text()
+        audio_format = format_message.lower().strip()
+        
+        # Validate audio format
+        allowed_formats = {
+            'flac': 'audio/flac',
+            'mp3': 'audio/mp3',
+            'm4a': 'audio/m4a',
+            'mpeg': 'audio/mpeg',
+            'mpga': 'audio/mpga',
+            'mp4': 'audio/mp4',
+            'ogg': 'audio/ogg',
+            'pcm': 'audio/pcm',
+            'wav': 'audio/wav',
+            'webm': 'audio/webm'
+        }
+        
+        if audio_format not in allowed_formats:
+            await websocket.send_json({
+                "status": "error",
+                "error": f"Unsupported audio format: {audio_format}. Supported formats: {', '.join(allowed_formats.keys())}"
+            })
+            await websocket.close()
+            return
+        
+        mime_type = allowed_formats[audio_format]
+        
+        await websocket.send_json({
+            "status": "format_accepted",
+            "format": audio_format,
+            "mime_type": mime_type,
+            "message": "Connection ready. Send audio data as binary, then 'ANALYZE' to process. Connection stays open for multiple files."
+        })
+        
+        while True:
+            # Try to receive message (could be text or binary)
+            message = await websocket.receive()
+            
+            # Check if connection is closing
+            if message.get('type') == 'websocket.disconnect':
+                break
+            
+            if 'text' in message:
+                command = message['text'].strip().upper()
+                
+                if command == "ANALYZE":
+                    if len(audio_buffer) == 0:
+                        await websocket.send_json({
+                            "status": "error",
+                            "error": "No audio data to analyze"
+                        })
+                        continue
+                    
+                    analysis_count += 1
+                    temp_file_path = f"/tmp/audio_stream_{uuid.uuid4()}_{analysis_count}.{audio_format}"
+                    
+                    try:
+                        # Save accumulated audio to temporary file
+                        with open(temp_file_path, "wb") as temp_file:
+                            temp_file.write(audio_buffer)
+                        
+                        # Send processing status
+                        await websocket.send_json({
+                            "status": "processing",
+                            "analysis_number": analysis_count,
+                            "audio_size_bytes": len(audio_buffer)
+                        })
+                        
+                        # Analyze the accumulated audio
+                        result = await parse_with_llm_audio(temp_file_path, mime_type)
+                        
+                        # Send analysis result back IMMEDIATELY
+                        await websocket.send_json({
+                            "status": "complete",
+                            "analysis_number": analysis_count,
+                            "audio_size_bytes": len(audio_buffer),
+                            "analysis": result.model_dump()
+                        })
+                        
+                        # Clear buffer after successful analysis (ready for next file)
+                        audio_buffer.clear()
+                        
+                    except Exception as e:
+                        await websocket.send_json({
+                            "status": "error",
+                            "analysis_number": analysis_count,
+                            "error": str(e)
+                        })
+                        # Clear buffer on error to allow retry
+                        audio_buffer.clear()
+                    
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_file_path):
+                            os.remove(temp_file_path)
+                
+                elif command == "CLEAR":
+                    # Clear the audio buffer without analyzing
+                    buffer_size = len(audio_buffer)
+                    audio_buffer.clear()
+                    await websocket.send_json({
+                        "status": "buffer_cleared",
+                        "cleared_bytes": buffer_size
+                    })
+                
+                elif command == "STATUS":
+                    # Get current buffer status
+                    await websocket.send_json({
+                        "status": "buffer_status",
+                        "buffer_size_bytes": len(audio_buffer),
+                        "analysis_count": analysis_count,
+                        "format": audio_format
+                    })
+                
+                elif command == "CLOSE":
+                    # Graceful close requested by client
+                    await websocket.send_json({
+                        "status": "closing",
+                        "message": f"Connection closing. Processed {analysis_count} files."
+                    })
+                    break
+                
+                else:
+                    await websocket.send_json({
+                        "status": "error",
+                        "error": f"Unknown command: {command}. Available commands: ANALYZE, CLEAR, STATUS, CLOSE"
+                    })
+            
+            elif 'bytes' in message:
+                # Accumulate audio data silently (no acknowledgment to avoid blocking)
+                audio_chunk = message['bytes']
+                audio_buffer.extend(audio_chunk)
+    
+    except WebSocketDisconnect:
+        print(f"WebSocket disconnected after {analysis_count} analyses, buffer size: {len(audio_buffer)} bytes")
+    except RuntimeError as e:
+        # Handle "Cannot call receive once a disconnect message has been received" error
+        if "disconnect" in str(e).lower():
+            print(f"WebSocket disconnected (RuntimeError) after {analysis_count} analyses")
+        else:
+            print(f"WebSocket RuntimeError: {e}")
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    finally:
+        # Don't try to send messages or close if already disconnected
+        print(f"WebSocket cleanup: {analysis_count} analyses completed, final buffer size: {len(audio_buffer)} bytes")
+
+@app.get("/analyzer_audio_stream/info", tags=["WebSocket"])
+async def get_websocket_info():
+    """
+    Get information about the WebSocket audio streaming endpoint.
+    
+    This is a helper endpoint to show WebSocket connection details in Swagger.
+    The actual WebSocket endpoint is at: ws://host:port/analyzer_audio_stream
+    """
+    return {
+        "endpoint": "/analyzer_audio_stream",
+        "protocol": "WebSocket",
+        "description": "Real-time audio streaming analysis endpoint",
+        "connection_url": "ws://127.0.0.1:8000/analyzer_audio_stream",
+        "usage": {
+            "step_1": "Connect to WebSocket endpoint",
+            "step_2": "Receive connection confirmation (JSON)",
+            "step_3": "Send audio format as text (e.g., 'mp3', 'wav')",
+            "step_4": "Receive format confirmation (JSON)",
+            "step_5": "Send audio data continuously as binary",
+            "step_6": "Send 'ANALYZE' as text to analyze accumulated audio",
+            "step_7": "Receive analysis results (JSON)",
+            "step_8": "Optionally continue sending more audio or close connection"
+        },
+        "commands": {
+            "ANALYZE": "Analyze all accumulated audio data in buffer",
+            "CLEAR": "Clear audio buffer without analyzing",
+            "STATUS": "Get current buffer status",
+            "CLOSE": "Close the WebSocket connection"
+        },
+        "supported_formats": ["flac", "mp3", "m4a", "mpeg", "mpga", "mp4", "ogg", "pcm", "wav", "webm"],
+        "example_client_code": "See test_websocket.py for usage example"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    import time
+    start = time.time()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
