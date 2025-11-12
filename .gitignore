@@ -1,4 +1,5 @@
-.env
 venv
 .venv
 env
+config.bat
+node_modules
