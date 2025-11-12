@@ -19,8 +19,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# from google import genai
+# from google.genai import types
+
 from google import genai
 from google.genai import types
+
+
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
 gemini_client = None
@@ -57,6 +62,7 @@ class OutputSchema(BaseModel):
     confidence_score: Annotated[Optional[int], Field(ge=0, le=100, description="Confidence score in percentage from 0 to 100")] = None
     risk_factors: Annotated[Optional[RiskFactors], Field(description="Detailed risk factor scores")] = None
     explanation: Annotated[Optional[str], Field(description="Summary of the call in two lines")] = None
+    explanation_arabic: Annotated[Optional[str], Field(description="Summary of the call in Arabic in two lines")] = None
     scam_tags: Annotated[Optional[List[ScamTag]], Field(description="List of scam tags detected in the call")] = None
 
 def check_mime_type(file: UploadFile):
@@ -89,6 +95,7 @@ def prompt_text():
     - **Too-Good-To-Be-True Offers**: Prizes, grants, or deals that seem unrealistic
     - **Threats & Intimidation**: Legal threats, account suspension warnings, or arrest warrants
     - **Secrecy Demands**: Instructions not to tell family, friends, or financial institutions
+    ## Only give the Arabic translation in the explanation_arabic field without any other text. Ony for this part the translation should be in Arabic and every other part of the response should be in English. Follow this strictly.
     ## CLASSIFY AS "AMBIGUOUS" IF:
     - Some suspicious elements exist but no clear scam indicators
     - Caller identity cannot be verified but no direct requests for money/information
@@ -168,7 +175,7 @@ async def parse_with_llm_text(file_content: str) -> OutputSchema:
         contents=parts,
         config=generation_config
     )
-    
+     
     if not getattr(response, "text", None):
         raise Exception("Empty LLM response")
     return OutputSchema.model_validate_json(response.text)
@@ -371,7 +378,7 @@ async def root():
         "service": "Real-time Scam Detection API",
         "endpoints": {
             "websocket": "/ws/analyze",
-            "rest_audio": "/analyzer_audio",
+            "rest_audio": "/api/v1/analyzer_audio",
             "rest_text": "/analyzer_text",
             "health": "/health"
         },
@@ -386,6 +393,18 @@ async def health_check():
         "gemini_client": gemini_status
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=8001)
+
+
+
+
+
+
+
+
+
+
+
+
